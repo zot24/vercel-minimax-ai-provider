@@ -5,6 +5,7 @@ import {
   LanguageModelV3Content,
   LanguageModelV3FinishReason,
   LanguageModelV3StreamPart,
+  LanguageModelV3Usage,
   SharedV3ProviderMetadata,
   SharedV3Warning,
 } from '@ai-sdk/provider';
@@ -53,17 +54,43 @@ function mapOpenAICompatibleFinishReason(
 ): LanguageModelV3FinishReason {
   switch (finishReason) {
     case 'stop':
-      return 'stop';
+      return { unified: 'stop', raw: finishReason };
     case 'length':
-      return 'length';
+      return { unified: 'length', raw: finishReason };
     case 'content_filter':
-      return 'content-filter';
+      return { unified: 'content-filter', raw: finishReason };
     case 'function_call':
     case 'tool_calls':
-      return 'tool-calls';
+      return { unified: 'tool-calls', raw: finishReason };
     default:
-      return 'unknown';
+      return { unified: 'other', raw: finishReason ?? undefined };
   }
+}
+
+function buildUsage({
+  promptTokens,
+  completionTokens,
+  cachedTokens,
+  reasoningTokens,
+}: {
+  promptTokens: number | undefined;
+  completionTokens: number | undefined;
+  cachedTokens: number | undefined;
+  reasoningTokens: number | undefined;
+}): LanguageModelV3Usage {
+  return {
+    inputTokens: {
+      total: promptTokens,
+      noCache: undefined,
+      cacheRead: cachedTokens,
+      cacheWrite: undefined,
+    },
+    outputTokens: {
+      total: completionTokens,
+      text: undefined,
+      reasoning: reasoningTokens,
+    },
+  };
 }
 
 export type MinimaxChatConfig = {
@@ -305,16 +332,15 @@ export class MinimaxChatLanguageModel implements LanguageModelV3 {
     return {
       content,
       finishReason: mapOpenAICompatibleFinishReason(choice.finish_reason),
-      usage: {
-        inputTokens: responseBody.usage?.prompt_tokens ?? undefined,
-        outputTokens: responseBody.usage?.completion_tokens ?? undefined,
-        totalTokens: responseBody.usage?.total_tokens ?? undefined,
+      usage: buildUsage({
+        promptTokens: responseBody.usage?.prompt_tokens ?? undefined,
+        completionTokens: responseBody.usage?.completion_tokens ?? undefined,
+        cachedTokens:
+          responseBody.usage?.prompt_tokens_details?.cached_tokens ?? undefined,
         reasoningTokens:
           responseBody.usage?.completion_tokens_details?.reasoning_tokens ??
           undefined,
-        cachedInputTokens:
-          responseBody.usage?.prompt_tokens_details?.cached_tokens ?? undefined,
-      },
+      }),
       providerMetadata,
       request: { body },
       response: {
@@ -367,7 +393,7 @@ export class MinimaxChatLanguageModel implements LanguageModelV3 {
       hasFinished: boolean;
     }> = [];
 
-    let finishReason: LanguageModelV3FinishReason = 'unknown';
+    let finishReason: LanguageModelV3FinishReason = { unified: 'other', raw: undefined };
     const usage: {
       completionTokens: number | undefined;
       completionTokensDetails: {
@@ -379,7 +405,6 @@ export class MinimaxChatLanguageModel implements LanguageModelV3 {
       promptTokensDetails: {
         cachedTokens: number | undefined;
       };
-      totalTokens: number | undefined;
     } = {
       completionTokens: undefined,
       completionTokensDetails: {
@@ -391,7 +416,6 @@ export class MinimaxChatLanguageModel implements LanguageModelV3 {
       promptTokensDetails: {
         cachedTokens: undefined,
       },
-      totalTokens: undefined,
     };
     let isFirstChunk = true;
     const providerOptionsName = this.providerOptionsName;
@@ -415,7 +439,7 @@ export class MinimaxChatLanguageModel implements LanguageModelV3 {
             }
 
             if (!chunk.success) {
-              finishReason = 'error';
+              finishReason = { unified: 'error', raw: 'error' };
               controller.enqueue({ type: 'error', error: chunk.error });
               return;
             }
@@ -424,7 +448,7 @@ export class MinimaxChatLanguageModel implements LanguageModelV3 {
             metadataExtractor?.processChunk(chunk.rawValue);
 
             if ('error' in value) {
-              finishReason = 'error';
+              finishReason = { unified: 'error', raw: 'error' };
               controller.enqueue({ type: 'error', error: value.error.message });
               return;
             }
@@ -441,14 +465,12 @@ export class MinimaxChatLanguageModel implements LanguageModelV3 {
               const {
                 prompt_tokens,
                 completion_tokens,
-                total_tokens,
                 prompt_tokens_details,
                 completion_tokens_details,
               } = value.usage;
 
               usage.promptTokens = prompt_tokens ?? undefined;
               usage.completionTokens = completion_tokens ?? undefined;
-              usage.totalTokens = total_tokens ?? undefined;
               if (completion_tokens_details?.reasoning_tokens != null) {
                 usage.completionTokensDetails.reasoningTokens =
                   completion_tokens_details?.reasoning_tokens;
@@ -705,15 +727,14 @@ export class MinimaxChatLanguageModel implements LanguageModelV3 {
             controller.enqueue({
               type: 'finish',
               finishReason,
-              usage: {
-                inputTokens: usage.promptTokens ?? undefined,
-                outputTokens: usage.completionTokens ?? undefined,
-                totalTokens: usage.totalTokens ?? undefined,
+              usage: buildUsage({
+                promptTokens: usage.promptTokens ?? undefined,
+                completionTokens: usage.completionTokens ?? undefined,
+                cachedTokens:
+                  usage.promptTokensDetails.cachedTokens ?? undefined,
                 reasoningTokens:
                   usage.completionTokensDetails.reasoningTokens ?? undefined,
-                cachedInputTokens:
-                  usage.promptTokensDetails.cachedTokens ?? undefined,
-              },
+              }),
               providerMetadata,
             });
           },
