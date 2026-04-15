@@ -4,7 +4,6 @@
 .envrc
 .next
 .turbo
-dist
 dist-ssr
 dist-bundle-check
 node_modules
