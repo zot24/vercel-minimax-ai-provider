@@ -139,6 +139,11 @@ export function convertToMinimaxChatMessages(
 
       case 'tool': {
         for (const toolResponse of content) {
+          if (toolResponse.type === 'tool-approval-response') {
+            // Skip tool approval responses - not supported by MiniMax
+            continue;
+          }
+
           const output = toolResponse.output;
 
           let contentValue: string;
